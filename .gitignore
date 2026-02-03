@@ -4,7 +4,6 @@ debug/
 release/
 
 # Cargo
-Cargo.lock
 **/*.rs.bk
 
 # IDE
