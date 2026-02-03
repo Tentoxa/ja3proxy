@@ -1,0 +1,45 @@
+[package]
+name = "ja3proxy"
+version = "1.0.0"
+edition = "2021"
+description = "TLS-Impersonate HTTP Proxy Service with JA3/JA4 fingerprinting"
+authors = ["Lukas"]
+
+[dependencies]
+# Runtime
+tokio = { version = "1", features = ["full", "sync"] }
+
+# HTTP Client with TLS emulation (latest RC for more browser profiles)
+wreq = { version = "6.0.0-rc.27", features = ["json", "socks", "gzip", "brotli", "zstd", "deflate"] }
+wreq-util = { version = "3.0.0-rc.9", features = ["emulation-serde", "emulation-rand"] }
+
+# Web Framework
+axum = { version = "0.8", features = ["json"] }
+tower = { version = "0.5", features = ["limit", "timeout"] }
+tower-http = { version = "0.6", features = ["trace", "limit", "timeout"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Base64 for binary responses
+base64 = "0.22"
+
+# URL parsing for SSRF protection
+url = "2.5"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+
+# strum for enum iteration
+strum = "0.27"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
