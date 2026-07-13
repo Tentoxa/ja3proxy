@@ -27,9 +27,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Copy actual source code
 COPY src ./src
 
-# Reuse the dependency cache and copy the binary outside the cache mount.
+# Reuse dependency artifacts, but force Cargo to replace the cached dummy binary
+# with the real source before copying it outside the cache mount.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
+    touch src/main.rs && \
     cargo build --release --locked && \
     cp /app/target/release/ja3proxy /ja3proxy
 
