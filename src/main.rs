@@ -11,19 +11,19 @@ mod models;
 mod validation;
 
 use axum::{
+    Router,
     extract::DefaultBodyLimit,
     routing::{get, post},
-    Router,
 };
 use std::{net::SocketAddr, time::Duration};
 use tokio::{net::TcpListener, signal};
 use tower_http::trace::TraceLayer;
 use tracing::info;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     config::Config,
-    handlers::{health_handler, request_handler, AppState},
+    handlers::{AppState, health_handler, request_handler},
 };
 
 /// Create the timeout layer (separate function to allow #[allow(deprecated)])
@@ -38,8 +38,8 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env();
 
     // Initialize tracing/logging
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
 
     tracing_subscriber::registry()
         .with(filter)

@@ -1,17 +1,21 @@
 # JA3Proxy
 
-A high-performance HTTP proxy service written in Rust that emulates TLS fingerprints (JA3/JA4) of popular browsers to bypass bot detection systems.
+A high-performance Rust HTTP service that forwards requests with reproducible
+browser TLS, HTTP/2, JA3, and JA4 fingerprints.
 
-> **Disclaimer:** This project was 100% vibe-coded due to time constraints. It works, but don't expect pristine code architecture or comprehensive test coverage.
+The transport is pinned to the compatible `wreq 6.0.0-rc.29` and
+`wreq-util 3.0.0-rc.14` release pair. The minimum supported Rust version is
+1.86.
 
 ## Features
 
-- TLS fingerprint emulation (Chrome, Firefox, Safari, Edge, OkHttp)
-- Upstream proxy support (HTTP, HTTPS, SOCKS5)
-- SSRF protection (private IPs blocked by default)
-- Concurrency limiting
-- Environment-based configuration
-- Docker support
+- Dynamic TLS profile registry for Chrome, Firefox, Safari, Edge, and OkHttp
+- Upstream proxy support (HTTP, HTTPS, and SOCKS5)
+- Manual redirect handling so callers retain protocol state
+- Incremental response-size enforcement
+- SSRF protection with private IPs blocked by default
+- Request-body, timeout, and concurrency limits
+- Graceful shutdown, structured tracing, and Docker health checks
 
 ## API
 
@@ -35,7 +39,7 @@ POST /request
   "body": null,
   "proxy": "socks5://127.0.0.1:1080",
   "timeout": 30,
-  "tlsProfile": "chrome_131"
+  "tlsProfile": "chrome_120"
 }
 ```
 
@@ -59,12 +63,22 @@ POST /request
 | `MAX_CONCURRENT` | 100 | Maximum concurrent requests |
 | `DEFAULT_TIMEOUT` | 30 | Default request timeout (seconds) |
 | `ALLOW_PRIVATE_IPS` | false | Allow requests to private IP ranges |
+| `MAX_REQUEST_BODY_SIZE` | 10485760 | Maximum request body size in bytes |
+| `MAX_RESPONSE_BODY_SIZE` | 52428800 | Maximum response body size in bytes |
+| `SERVER_TIMEOUT` | 120 | End-to-end server request timeout in seconds |
 
 ## Usage
 
 ### Local
 ```bash
-cargo run --release
+cargo run --locked
+```
+
+### Quality checks
+```bash
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
 ```
 
 ### Docker

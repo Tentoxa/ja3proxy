@@ -1,53 +1,44 @@
-//! Dynamic TLS profile mapping using wreq-util's Emulation enum
+//! Runtime TLS profile mapping backed by wreq-util's profile registry.
 //!
-//! This module provides runtime parsing of TLS profile strings (e.g., "chrome_131")
-//! to wreq_util::Emulation variants. It leverages strum's VariantArray trait to
-//! dynamically discover all available profiles, making it future-proof when new
-//! browser versions are added to wreq-util.
+//! The public API remains string-based because callers select profiles over
+//! JSON. Parsing and profile discovery both use wreq-util's canonical serde
+//! names, so the endpoint cannot drift from the pinned emulation release.
 
-use strum::VariantArray;
-use wreq_util::Emulation;
+use wreq_util::Profile;
 
-/// Parse a TLS profile string into an Emulation variant.
+/// Parse a TLS profile string into its canonical profile.
 ///
 /// # Arguments
 /// * `profile` - Profile string like "chrome_131", "firefox_139", etc.
 ///
 /// # Returns
-/// * `Ok(Emulation)` if the profile is valid
+/// * `Ok(Profile)` if the profile is valid
 /// * `Err(String)` with the invalid profile name if not found
 ///
 /// # Example
 /// ```
 /// let emulation = parse_tls_profile("chrome_131").unwrap();
 /// ```
-pub fn parse_tls_profile(profile: &str) -> Result<Emulation, String> {
-    // Use serde deserialization which handles the snake_case naming convention
-    // wreq-util serializes as "chrome_131", "firefox_139", etc.
-    serde_json::from_str(&format!("\"{}\"", profile)).map_err(|_| profile.to_string())
+pub fn parse_tls_profile(profile: &str) -> Result<Profile, String> {
+    serde_json::from_str(&format!("\"{profile}\"")).map_err(|_| profile.to_owned())
 }
 
-/// Get a list of all available TLS profile names.
+/// Get every canonical TLS profile name exposed by the pinned wreq-util release.
 ///
-/// This dynamically reads from Emulation::VARIANTS, so it automatically
-/// includes any new profiles added in future wreq-util versions.
-///
-/// # Returns
+/// The inherent `Profile::VARIANTS` registry replaced the strum-based registry
+/// in wreq-util 3.0. Keeping this dynamic prevents hand-maintained profile lists.
 /// A vector of profile names like ["chrome_100", "chrome_101", ..., "firefox_139"]
 pub fn available_profiles() -> Vec<String> {
-    Emulation::VARIANTS
+    Profile::VARIANTS
         .iter()
-        .filter_map(|e| {
-            serde_json::to_string(e)
-                .ok()
-                .map(|s| s.trim_matches('"').to_string())
-        })
+        .filter_map(|profile| serde_json::to_string(profile).ok())
+        .map(|profile| profile.trim_matches('"').to_owned())
         .collect()
 }
 
-/// Get the default TLS profile (latest Chrome)
-pub fn default_profile() -> Emulation {
-    Emulation::default()
+/// Get the newest Chrome profile shipped by the pinned wreq-util release.
+pub const fn default_profile() -> Profile {
+    Profile::Chrome149
 }
 
 #[cfg(test)]
@@ -64,6 +55,22 @@ mod tests {
     fn test_parse_firefox_profile() {
         let result = parse_tls_profile("firefox_139");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn preserves_profiles_required_by_sellaro() {
+        for profile in ["okhttp_4.12", "chrome_120", "chrome_133"] {
+            assert!(
+                parse_tls_profile(profile).is_ok(),
+                "required profile {profile} is missing"
+            );
+        }
+    }
+
+    #[test]
+    fn default_profile_is_the_latest_pinned_chrome() {
+        let serialized = serde_json::to_string(&default_profile()).unwrap();
+        assert_eq!(serialized, "\"chrome_149\"");
     }
 
     #[test]

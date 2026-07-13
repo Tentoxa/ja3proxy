@@ -1,9 +1,9 @@
 //! Error types and error codes for the proxy service
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 use std::fmt;
@@ -98,7 +98,7 @@ impl ProxyError {
         Self::new(StatusCode::BAD_GATEWAY, message, ErrorCode::TlsError)
     }
 
-    pub fn proxy_error(message: impl Into<String>) -> Self {
+    pub fn proxy_failure(message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_GATEWAY, message, ErrorCode::ProxyError)
     }
 

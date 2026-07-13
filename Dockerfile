@@ -1,10 +1,12 @@
+# syntax=docker/dockerfile:1.7
+
 # Build stage
-FROM rust:latest AS builder
+FROM rust:1.97.0-bookworm AS builder
 
 WORKDIR /app
 
 # Install build dependencies for BoringSSL
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     build-essential \
     golang \
@@ -14,24 +16,28 @@ RUN apt-get update && apt-get install -y \
 # Copy manifests first for dependency caching
 COPY Cargo.toml Cargo.lock ./
 
-# Create dummy source to build dependencies
-RUN mkdir src && \
+# Compile dependencies once and retain BoringSSL artifacts across source changes.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    mkdir src && \
     echo "fn main() {}" > src/main.rs && \
-    cargo build --release && \
+    cargo build --release --locked && \
     rm -rf src
 
 # Copy actual source code
 COPY src ./src
 
-# Build the application
-RUN touch src/main.rs && \
-    cargo build --release
+# Reuse the dependency cache and copy the binary outside the cache mount.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --locked && \
+    cp /app/target/release/ja3proxy /ja3proxy
 
 # Runtime stage
 FROM debian:bookworm-slim
 
 # Install runtime dependencies (including curl for health checks)
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -40,7 +46,7 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -r -s /bin/false ja3proxy
 
 # Copy binary from builder
-COPY --from=builder /app/target/release/ja3proxy /usr/local/bin/ja3proxy
+COPY --from=builder /ja3proxy /usr/local/bin/ja3proxy
 
 # Set ownership
 RUN chown ja3proxy:ja3proxy /usr/local/bin/ja3proxy
