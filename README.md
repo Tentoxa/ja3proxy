@@ -3,6 +3,14 @@
 A high-performance Rust HTTP service that forwards requests with reproducible
 browser TLS, HTTP/2, JA3, and JA4 fingerprints.
 
+Repository: [sellaro-net/ja3proxy](https://github.com/sellaro-net/ja3proxy).
+
+Nach dem Repository-Transfer verwenden zukünftige reguläre Publisher
+`ghcr.io/sellaro-net/ja3proxy`. Das bestehende öffentliche Paket
+`ghcr.io/tentoxa/ja3proxy` bleibt davon getrennt; der Transfer verschiebt
+keine Images. Bestehende Deployment-Pins bleiben bis zum gesonderten manuellen
+Imagewechsel unverändert. Paket-Zugriffe können sich durch den Transfer ändern.
+
 The transport is pinned to the compatible `wreq 6.0.0-rc.29` and
 `wreq-util 3.0.0-rc.14` release pair. The minimum supported Rust version is
 1.86.
