@@ -13,7 +13,10 @@ on:
 
 concurrency:
   group: docker-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 env:
   REGISTRY: ghcr.io
@@ -21,27 +24,43 @@ env:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate workflow definitions
+        run: |
+          set -euo pipefail
+          tool_dir="${RUNNER_TEMP}/actionlint"
+          mkdir -p "$tool_dir"
+          curl -fsSL --retry 3 --retry-all-errors \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            -o "$tool_dir/actionlint.tar.gz"
+          printf '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  %s\n' \
+            "$tool_dir/actionlint.tar.gz" | sha256sum --check --status
+          tar -xzf "$tool_dir/actionlint.tar.gz" -C "$tool_dir" actionlint
+          "$tool_dir/actionlint" -color
 
       - name: Cache Rust dependencies and build artifacts
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-${{ hashFiles('rust-toolchain.toml') }}-
 
-      - name: Install Rust quality components
-        run: rustup component add clippy rustfmt
+      - name: Set up pinned Rust toolchain
+        run: rustup show active-toolchain
 
       - name: Check formatting
         run: cargo fmt --check
@@ -52,11 +71,56 @@ jobs:
       - name: Run tests
         run: cargo test --locked
 
+      - name: Set up Docker Buildx for PR verification
+        if: github.event_name == 'pull_request'
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build PR image without publishing
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ja3proxy-ci:${{ github.sha }}
+          cache-from: |
+            type=gha,scope=ja3proxy-pr
+            type=gha,scope=ja3proxy-amd64
+          cache-to: type=gha,mode=max,scope=ja3proxy-pr
+
+      - name: Verify the actual container and default SSRF boundary
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          container="ja3proxy-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker logs "$container" || true
+            docker rm -f "$container" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run -d --name "$container" \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            --publish 127.0.0.1::8080 "ja3proxy-ci:${GITHUB_SHA}"
+          binding=$(docker port "$container" 8080/tcp)
+          port="${binding##*:}"
+          curl -fsS --retry 30 --retry-delay 1 --retry-connrefused --max-time 2 \
+            "http://127.0.0.1:${port}/health" | jq -e '.status == "ok"'
+          test "$(docker exec "$container" id -u)" -ne 0
+          status=$(curl -sS -o "$RUNNER_TEMP/ssrf-response.json" -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data '{"url":"http://127.0.0.1:1/","method":"GET"}' \
+            "http://127.0.0.1:${port}/request")
+          test "$status" = 400
+
   build:
     name: Build ${{ matrix.arch }}
     needs: quality
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -73,7 +137,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Normalize image name
         id: image
@@ -81,10 +147,10 @@ jobs:
         run: echo "name=${GITHUB_REPOSITORY,,}" >>"$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -92,13 +158,13 @@ jobs:
 
       - name: Extract image labels
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
 
       - name: Build and push image by digest
         id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           platforms: ${{ matrix.platform }}
@@ -118,7 +184,7 @@ jobs:
           touch "/tmp/digests/${DIGEST#sha256:}"
 
       - name: Upload image digest
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digest-${{ matrix.arch }}
           path: /tmp/digests/*
@@ -128,15 +194,16 @@ jobs:
   merge:
     name: Publish multi-architecture manifest
     needs: build
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
 
     steps:
       - name: Download image digests
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: /tmp/digests
           pattern: digest-*
@@ -148,10 +215,10 @@ jobs:
         run: echo "name=${GITHUB_REPOSITORY,,}" >>"$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -159,7 +226,7 @@ jobs:
 
       - name: Extract image tags
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           tags: |
@@ -194,12 +261,15 @@ jobs:
           IMAGE: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           TAG: ${{ steps.meta.outputs.version }}
         run: |
-          docker buildx imagetools inspect "${IMAGE}:${TAG}"
-          docker buildx imagetools inspect "${IMAGE}:${TAG}" --raw |
-            jq -e '
-              [.manifests[].platform
-                | select(.os == "linux")
-                | .architecture] as $architectures
-              | ($architectures | index("amd64") != null)
-                and ($architectures | index("arm64") != null)
-            '
+          manifest=$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{json .Manifest}}')
+          printf '%s' "$manifest" | jq -e '
+            [.manifests[].platform
+              | select(.os == "linux")
+              | .architecture] as $architectures
+            | ($architectures | index("amd64") != null)
+              and ($architectures | index("arm64") != null)
+          '
+          digest=$(printf '%s' "$manifest" | jq -er '.digest | select(test("^sha256:[a-f0-9]{64}$"))')
+          printf '## Published multi-architecture image\n\n`%s@%s`\n' \
+            "$IMAGE" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s@%s\n' "$IMAGE" "$digest"
