@@ -2,9 +2,11 @@
 name = "ja3proxy"
 version = "1.0.0"
 edition = "2024"
-rust-version = "1.86"
+rust-version = "1.97"
 description = "TLS-Impersonate HTTP Proxy Service with JA3/JA4 fingerprinting"
 authors = ["Lukas"]
+repository = "https://github.com/sellaro-net/ja3proxy"
+readme = "README.md"
 
 [dependencies]
 # Runtime
